@@ -1,40 +1,38 @@
-name: Build APK
+name: Build Task App APK
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:  # permite ejecutarlo manualmente
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout código
+      - name: Checkout repositorio
         uses: actions/checkout@v4
 
-      - name: Configurar JDK 17
+      - name: Configurar Java 17 con Caché de Gradle
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle' # ⚡ Guarda en caché las librerías para ejecuciones futuras
 
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          api-level: 34
-          build-tools: '34.0.0'
 
-      - name: Dar permiso de ejecución al gradlew (si existe)
-        run: chmod +x gradlew || true
+      - name: Dar permisos de ejecución a Gradle Wrapper
+        run: chmod +x gradlew
 
-      - name: Compilar APK de depuración
-        uses: gradle/gradle-build-action@v2
-        with:
-          arguments: assembleDebug
+      - name: Compilar APK Debug
+        run: ./gradlew assembleDebug --no-daemon
 
-      - name: Subir APK como artefacto
+      - name: Subir Artifact (APK)
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: taskapp-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7
