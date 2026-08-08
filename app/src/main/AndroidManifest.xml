@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.testapp">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
         android:allowBackup="true"
-        android:label="Mi App de Prueba"
-        android:theme="@style/Theme.TestApp">
+        android:label="Mi Lista de Tareas"
+        android:theme="@style/Theme.TaskApp">
         <activity
             android:name=".MainActivity"
             android:exported="true">
