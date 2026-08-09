@@ -7,6 +7,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
+import android.media.projection.MediaProjectionManager;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -17,6 +18,8 @@ import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.view.PreviewView;
@@ -37,10 +40,12 @@ public class MainActivity extends AppCompatActivity implements CameraService.Ser
     private SwitchMaterial switchMode;
     private TextView tvDetectionStatus, tvServerIp;
     private TextInputEditText etPort, etUser, etPass;
-    private Button btnToggleServer;
+    private Button btnToggleServer, btnRequestScreenShare;
 
     private CameraService cameraService;
     private boolean isBound = false;
+
+    private ActivityResultLauncher<Intent> screenCaptureLauncher;
 
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
@@ -75,6 +80,21 @@ public class MainActivity extends AppCompatActivity implements CameraService.Ser
         etPass = findViewById(R.id.etPass);
         btnToggleServer = findViewById(R.id.btnToggleServer);
 
+        // Registro para capturar pantalla con autorización del sistema
+        screenCaptureLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                        if (isBound && cameraService != null) {
+                            cameraService.startScreenCapture(result.getResultCode(), result.getData());
+                            Toast.makeText(this, "Permiso de pantalla concedido", Toast.LENGTH_SHORT).show();
+                        }
+                    } else {
+                        Toast.makeText(this, "Permiso de pantalla denegado", Toast.LENGTH_SHORT).show();
+                    }
+                }
+        );
+
         switchMode.setOnCheckedChangeListener((buttonView, isChecked) -> {
             if (isBound && cameraService != null) {
                 cameraService.setAutoMode(isChecked);
@@ -90,6 +110,13 @@ public class MainActivity extends AppCompatActivity implements CameraService.Ser
 
         updateIpDisplay();
         checkDeviceOwnerStatus();
+    }
+
+    public void requestScreenCapturePermission() {
+        MediaProjectionManager projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        if (projectionManager != null) {
+            screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent());
+        }
     }
 
     @Override
@@ -111,6 +138,7 @@ public class MainActivity extends AppCompatActivity implements CameraService.Ser
     private boolean checkAndRequestPermissions() {
         List<String> permissions = new ArrayList<>();
         permissions.add(Manifest.permission.CAMERA);
+        permissions.add(Manifest.permission.RECORD_AUDIO);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS);
@@ -144,7 +172,7 @@ public class MainActivity extends AppCompatActivity implements CameraService.Ser
             if (allGranted) {
                 startAndBindService();
             } else {
-                Toast.makeText(this, "Permisos necesarios para funcionar en segundo plano", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Permisos requeridos para cámaras y audio", Toast.LENGTH_SHORT).show();
             }
         }
     }
@@ -173,9 +201,10 @@ public class MainActivity extends AppCompatActivity implements CameraService.Ser
 
             if (cameraService.startWebServer(port, user, pass)) {
                 updateServerUiState();
-                Toast.makeText(this, "Servidor iniciado en segundo plano", Toast.LENGTH_SHORT).show();
+                requestScreenCapturePermission(); // Pedir permiso de transmisión de pantalla
+                Toast.makeText(this, "Servidor Iniciado", Toast.LENGTH_SHORT).show();
             } else {
-                Toast.makeText(this, "Error al iniciar servidor web", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Error al iniciar servidor", Toast.LENGTH_SHORT).show();
             }
         }
     }
