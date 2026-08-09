@@ -2,27 +2,30 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Permisos de Hardware y Funcionalidades -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Permisos para Servicios en Primer Plano -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
     <application
         android:allowBackup="true"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:fullBackupContent="@xml/backup_rules"
-        android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:icon="@android:drawable/ic_menu_camera"
+        android:label="DetectCamera"
+        android:roundIcon="@android:drawable/ic_menu_camera"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Detectcamera"
+        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
+        tools:ignore="MissingApplicationIcon"
         tools:targetApi="31">
 
+        <!-- Actividad Principal -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -32,12 +35,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Servicio Background / Foreground -->
         <service
             android:name=".CameraService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="camera|mediaProjection|microphone" />
 
+        <!-- Receiver de Administración de Dispositivo -->
         <receiver
             android:name=".MyDeviceAdminReceiver"
             android:exported="true"
