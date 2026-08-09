@@ -20,6 +20,7 @@ import androidx.camera.core.ExperimentalGetImage;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
+import androidx.camera.core.UseCaseGroup;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.NotificationCompat;
@@ -53,15 +54,19 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     private PoseDetector poseDetector;
 
     private ProcessCameraProvider cameraProvider;
-    private ImageAnalysis imageAnalysis;
     private PreviewView pendingPreviewView;
 
     private WebServer webServer;
     private boolean isServerRunning = false;
     private boolean isAutoMode = true;
-    private boolean isCameraHardwareEnabled = true; // Control del sensor físico
+
+    // Estado independiente de cada cámara
+    private boolean isBackCameraEnabled = true;
+    private boolean isFrontCameraEnabled = false;
+
     private volatile boolean isDetected = false;
-    private volatile byte[] currentFrameBytes;
+    private volatile byte[] backFrameBytes;
+    private volatile byte[] frontFrameBytes;
 
     private ServiceCallback callback;
 
@@ -108,7 +113,7 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     public int onStartCommand(Intent intent, int flags, int startId) {
         super.onStartCommand(intent, flags, startId);
 
-        Notification notification = createNotification("Transmisión y detección activas en segundo plano");
+        Notification notification = createNotification("Transmisión y detección activas");
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
@@ -131,44 +136,100 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
         ContextCompat.getMainExecutor(this).execute(this::updateCameraUseCases);
     }
 
-    // Controla la activación y liberación del sensor de la cámara desde la Web
     @Override
-    public void setCameraHardwareEnabled(boolean enable) {
-        this.isCameraHardwareEnabled = enable;
-        ContextCompat.getMainExecutor(this).execute(() -> {
-            if (cameraProvider != null) {
-                if (enable) {
-                    updateCameraUseCases();
-                } else {
-                    cameraProvider.unbindAll(); // Libera el sensor físico completamente
-                    currentFrameBytes = null;
-                    notifyStatus(false, "Estado: Cámara Apagada remotamente");
-                }
-            }
-        });
+    public void setBackCameraEnabled(boolean enable) {
+        this.isBackCameraEnabled = enable;
+        ContextCompat.getMainExecutor(this).execute(this::updateCameraUseCases);
     }
 
     @Override
-    public boolean isCameraHardwareEnabled() {
-        return isCameraHardwareEnabled;
+    public void setFrontCameraEnabled(boolean enable) {
+        this.isFrontCameraEnabled = enable;
+        ContextCompat.getMainExecutor(this).execute(this::updateCameraUseCases);
+    }
+
+    @Override
+    public boolean isBackCameraEnabled() {
+        return isBackCameraEnabled;
+    }
+
+    @Override
+    public boolean isFrontCameraEnabled() {
+        return isFrontCameraEnabled;
+    }
+
+    @Override
+    public boolean isConcurrentSupported() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && cameraProvider != null) {
+            return !cameraProvider.getAvailableConcurrentCameraInfos().isEmpty();
+        }
+        return false;
     }
 
     private void updateCameraUseCases() {
-        if (cameraProvider == null || imageAnalysis == null || !isCameraHardwareEnabled) return;
+        if (cameraProvider == null) return;
 
         try {
             cameraProvider.unbindAll();
-            CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
 
-            if (pendingPreviewView != null) {
-                Preview preview = new Preview.Builder().build();
-                preview.setSurfaceProvider(pendingPreviewView.getSurfaceProvider());
-                cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
-            } else {
-                cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis);
+            if (!isBackCameraEnabled && !isFrontCameraEnabled) {
+                backFrameBytes = null;
+                frontFrameBytes = null;
+                notifyStatus(false, "Estado: Cámaras Apagadas");
+                return;
             }
+
+            // Si ambas están solicitadas y el dispositivo soporta cámara dual simultánea
+            if (isBackCameraEnabled && isFrontCameraEnabled && isConcurrentSupported()) {
+                bindBothCameras();
+            } else if (isBackCameraEnabled) {
+                bindSingleCamera(CameraSelector.DEFAULT_BACK_CAMERA, true);
+            } else if (isFrontCameraEnabled) {
+                bindSingleCamera(CameraSelector.DEFAULT_FRONT_CAMERA, false);
+            }
+
         } catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+
+    private void bindSingleCamera(CameraSelector selector, boolean isBack) {
+        ImageAnalysis analysis = new ImageAnalysis.Builder()
+                .setTargetResolution(new Size(640, 480))
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build();
+
+        analysis.setAnalyzer(cameraExecutor, imageProxy -> processImageProxy(imageProxy, isBack));
+
+        if (isBack && pendingPreviewView != null) {
+            Preview preview = new Preview.Builder().build();
+            preview.setSurfaceProvider(pendingPreviewView.getSurfaceProvider());
+            cameraProvider.bindToLifecycle(this, selector, preview, analysis);
+        } else {
+            cameraProvider.bindToLifecycle(this, selector, analysis);
+        }
+    }
+
+    private void bindBothCameras() {
+        // En dispositivos compatibles vincula ambas simultáneamente
+        ImageAnalysis backAnalysis = new ImageAnalysis.Builder()
+                .setTargetResolution(new Size(640, 480))
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build();
+        backAnalysis.setAnalyzer(cameraExecutor, imageProxy -> processImageProxy(imageProxy, true));
+
+        ImageAnalysis frontAnalysis = new ImageAnalysis.Builder()
+                .setTargetResolution(new Size(640, 480))
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build();
+        frontAnalysis.setAnalyzer(cameraExecutor, imageProxy -> processImageProxy(imageProxy, false));
+
+        try {
+            cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, backAnalysis);
+            cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, frontAnalysis);
+        } catch (Exception e) {
+            // Fallback si falla el modo concurrente
+            bindSingleCamera(CameraSelector.DEFAULT_BACK_CAMERA, true);
         }
     }
 
@@ -178,16 +239,7 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
         cameraProviderFuture.addListener(() -> {
             try {
                 cameraProvider = cameraProviderFuture.get();
-
-                imageAnalysis = new ImageAnalysis.Builder()
-                        .setTargetResolution(new Size(640, 480))
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build();
-
-                imageAnalysis.setAnalyzer(cameraExecutor, this::processImageProxy);
-
                 updateCameraUseCases();
-
             } catch (ExecutionException | InterruptedException e) {
                 e.printStackTrace();
             }
@@ -195,15 +247,19 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     }
 
     @ExperimentalGetImage
-    private void processImageProxy(ImageProxy imageProxy) {
-        if (!isCameraHardwareEnabled || imageProxy.getImage() == null) {
+    private void processImageProxy(ImageProxy imageProxy, boolean isBack) {
+        if (imageProxy.getImage() == null) {
             imageProxy.close();
             return;
         }
 
         byte[] jpeg = imageProxyToJpeg(imageProxy);
         if (jpeg != null) {
-            currentFrameBytes = jpeg;
+            if (isBack) {
+                backFrameBytes = jpeg;
+            } else {
+                frontFrameBytes = jpeg;
+            }
         }
 
         InputImage inputImage = InputImage.fromMediaImage(imageProxy.getImage(), imageProxy.getImageInfo().getRotationDegrees());
@@ -220,11 +276,7 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
                                 .addOnSuccessListener(pose -> {
                                     boolean poseFound = !pose.getAllPoseLandmarks().isEmpty();
                                     isDetected = poseFound;
-                                    if (poseFound) {
-                                        notifyStatus(true, "Estado: ¡Cuerpo/Silueta Detectada!");
-                                    } else {
-                                        notifyStatus(false, "Estado: Sin detección activa");
-                                    }
+                                    notifyStatus(poseFound, poseFound ? "Estado: ¡Cuerpo Detectado!" : "Estado: Sin detección");
                                     imageProxy.close();
                                 })
                                 .addOnFailureListener(e -> imageProxy.close());
@@ -254,7 +306,6 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
             bitmap.compress(Bitmap.CompressFormat.JPEG, 60, out);
             return out.toByteArray();
         } catch (Exception e) {
-            e.printStackTrace();
             return null;
         }
     }
@@ -291,15 +342,17 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     }
 
     @Override
-    public byte[] getCurrentFrame() {
-        return currentFrameBytes;
+    public byte[] getBackFrame() {
+        return backFrameBytes;
+    }
+
+    @Override
+    public byte[] getFrontFrame() {
+        return frontFrameBytes;
     }
 
     @Override
     public boolean isStreamingAllowed() {
-        if (!isCameraHardwareEnabled) {
-            return false;
-        }
         if (!isAutoMode) {
             return true;
         }
