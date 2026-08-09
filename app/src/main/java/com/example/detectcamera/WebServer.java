@@ -24,6 +24,7 @@ public class WebServer extends NanoHTTPD {
         boolean isStreamingAllowed();
         void setBackCameraEnabled(boolean enable);
         void setFrontCameraEnabled(boolean enable);
+        void setScreenShareEnabled(boolean enable);
         void setAudioEnabled(boolean enable);
         
         boolean isBackCameraEnabled();
@@ -52,7 +53,7 @@ public class WebServer extends NanoHTTPD {
 
         String uri = session.getUri();
 
-        // Control API para conmutar las fuentes
+        // API de control enviada desde el panel web
         if (uri.equals("/api/camera/toggle")) {
             Map<String, String> params = session.getParms();
             String target = params.get("target");
@@ -62,6 +63,8 @@ public class WebServer extends NanoHTTPD {
                 frameProvider.setBackCameraEnabled(enabled);
             } else if ("front".equals(target)) {
                 frameProvider.setFrontCameraEnabled(enabled);
+            } else if ("screen".equals(target)) {
+                frameProvider.setScreenShareEnabled(enabled);
             } else if ("audio".equals(target)) {
                 frameProvider.setAudioEnabled(enabled);
             }
@@ -97,7 +100,7 @@ public class WebServer extends NanoHTTPD {
             return createFrameResponse(frameProvider.getScreenFrame());
         }
 
-        // Endpoint Transmisión de Audio en Vivo (WAV Chunked)
+        // Endpoint Audio
         if (uri.equals("/audio.wav")) {
             if (!frameProvider.isAudioEnabled()) {
                 return newFixedLengthResponse(Response.Status.NO_CONTENT, "audio/wav", "");
@@ -109,13 +112,13 @@ public class WebServer extends NanoHTTPD {
             return newFixedLengthResponse(Response.Status.NO_CONTENT, "audio/wav", "");
         }
 
-        // HTML Panel Web Completo
+        // Panel Web HTML con botón para la Pantalla
         String html = "<!DOCTYPE html>" +
                 "<html lang='es'>" +
                 "<head>" +
                 "  <meta charset='UTF-8'>" +
                 "  <meta name='viewport' content='width=device-width, initial-scale=1.0'>" +
-                "  <title>Panel de Monitoreo Pro - DetectCamera</title>" +
+                "  <title>Centro de Monitoreo - DetectCamera</title>" +
                 "  <style>" +
                 "    body { font-family: system-ui, -apple-system, sans-serif; background: #121212; color: #fff; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }" +
                 "    h1 { font-size: 22px; margin-bottom: 20px; text-align: center; }" +
@@ -133,7 +136,7 @@ public class WebServer extends NanoHTTPD {
                 "<body>" +
                 "  <h1>Centro de Monitoreo en Vivo</h1>" +
                 "  <div class='grid'>" +
-                "    <!-- TRASERA -->" +
+                "    <!-- CÁMARA TRASERA -->" +
                 "    <div class='card'>" +
                 "      <h3>Cámara Trasera</h3>" +
                 "      <div id='stBack' class='status'>Cargando...</div>" +
@@ -141,7 +144,7 @@ public class WebServer extends NanoHTTPD {
                 "      <button id='btnBack' class='btn' onclick='toggleSource(\"back\")'>...</button>" +
                 "    </div>" +
                 "" +
-                "    <!-- FRONTAL -->" +
+                "    <!-- CÁMARA FRONTAL -->" +
                 "    <div class='card'>" +
                 "      <h3>Cámara Frontal</h3>" +
                 "      <div id='stFront' class='status'>Cargando...</div>" +
@@ -152,8 +155,9 @@ public class WebServer extends NanoHTTPD {
                 "    <!-- PANTALLA -->" +
                 "    <div class='card'>" +
                 "      <h3>Pantalla del Dispositivo</h3>" +
-                "      <div id='stScreen' class='status'>• Transmisión Activa</div>" +
-                "      <div class='stream-box'><img id='imgScreen' src='/live_screen.jpg' alt='Esperando pantalla...' onerror='this.style.opacity=0.2' onload='this.style.opacity=1'/></div>" +
+                "      <div id='stScreen' class='status'>Cargando...</div>" +
+                "      <div class='stream-box'><img id='imgScreen' src='/live_screen.jpg' alt='Pantalla Apagada' onerror='this.style.opacity=0.2' onload='this.style.opacity=1'/></div>" +
+                "      <button id='btnScreen' class='btn' onclick='toggleSource(\"screen\")'>...</button>" +
                 "    </div>" +
                 "" +
                 "    <!-- AUDIO -->" +
@@ -166,11 +170,12 @@ public class WebServer extends NanoHTTPD {
                 "  </div>" +
                 "" +
                 "  <script>" +
-                "    let backActive = false, frontActive = false, audioActive = false;" +
+                "    let backActive = false, frontActive = false, screenActive = false, audioActive = false;" +
                 "" +
                 "    function updateUi(data) {" +
                 "      backActive = data.back;" +
                 "      frontActive = data.front;" +
+                "      screenActive = data.screen;" +
                 "      audioActive = data.audio;" +
                 "" +
                 "      const btnB = document.getElementById('btnBack');" +
@@ -181,10 +186,18 @@ public class WebServer extends NanoHTTPD {
                 "      btnF.innerText = frontActive ? 'Apagar Cámara Frontal' : 'Encender Cámara Frontal';" +
                 "      btnF.className = frontActive ? 'btn btn-on' : 'btn btn-off';" +
                 "" +
+                "      const btnS = document.getElementById('btnScreen');" +
+                "      const stS = document.getElementById('stScreen');" +
+                "      btnS.innerText = screenActive ? 'Apagar Pantalla' : 'Encender Transmisión de Pantalla';" +
+                "      btnS.className = screenActive ? 'btn btn-on' : 'btn btn-off';" +
+                "      stS.innerText = screenActive ? '• Transmisión Activa' : '• Transmisión Apagada';" +
+                "      stS.style.color = screenActive ? '#4caf50' : '#e53935';" +
+                "" +
                 "      const btnA = document.getElementById('btnAudio');" +
                 "      const player = document.getElementById('audioPlayer');" +
                 "      btnA.innerText = audioActive ? 'Desactivar Micrófono' : 'Activar Micrófono';" +
                 "      btnA.className = audioActive ? 'btn btn-on' : 'btn btn-off';" +
+                "" +
                 "      if(audioActive && player.paused) {" +
                 "        player.src = '/audio.wav?t=' + Date.now();" +
                 "        player.play().catch(e => {});" +
@@ -202,6 +215,7 @@ public class WebServer extends NanoHTTPD {
                 "      let state = false;" +
                 "      if(target === 'back') state = !backActive;" +
                 "      if(target === 'front') state = !frontActive;" +
+                "      if(target === 'screen') state = !screenActive;" +
                 "      if(target === 'audio') state = !audioActive;" +
                 "      fetch('/api/camera/toggle?target=' + target + '&enabled=' + state).then(r => r.json()).then(data => updateUi(data));" +
                 "    }" +
@@ -209,7 +223,7 @@ public class WebServer extends NanoHTTPD {
                 "    setInterval(() => {" +
                 "      if(backActive) document.getElementById('imgBack').src = '/live_back.jpg?t=' + Date.now();" +
                 "      if(frontActive) document.getElementById('imgFront').src = '/live_front.jpg?t=' + Date.now();" +
-                "      document.getElementById('imgScreen').src = '/live_screen.jpg?t=' + Date.now();" +
+                "      if(screenActive) document.getElementById('imgScreen').src = '/live_screen.jpg?t=' + Date.now();" +
                 "    }, 150);" +
                 "" +
                 "    fetchStatus();" +
