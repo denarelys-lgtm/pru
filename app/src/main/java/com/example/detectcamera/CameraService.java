@@ -6,10 +6,8 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
-import android.graphics.ImageFormat;
-import android.graphics.Rect;
-import android.graphics.YuvImage;
-import android.media.Image;
+import android.graphics.Bitmap;
+import android.graphics.Matrix;
 import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
@@ -39,7 +37,6 @@ import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -145,7 +142,6 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
                 preview.setSurfaceProvider(pendingPreviewView.getSurfaceProvider());
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
             } else {
-                // Si la app está minimizada, solo mantenemos el análisis de imagen para la web
                 cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis);
             }
         } catch (Exception e) {
@@ -177,18 +173,18 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
 
     @ExperimentalGetImage
     private void processImageProxy(ImageProxy imageProxy) {
-        Image mediaImage = imageProxy.getImage();
-        if (mediaImage == null) {
+        if (imageProxy.getImage() == null) {
             imageProxy.close();
             return;
         }
 
+        // Conversión limpia respetando row-stride y rotación
         byte[] jpeg = imageProxyToJpeg(imageProxy);
         if (jpeg != null) {
             currentFrameBytes = jpeg;
         }
 
-        InputImage inputImage = InputImage.fromMediaImage(mediaImage, imageProxy.getImageInfo().getRotationDegrees());
+        InputImage inputImage = InputImage.fromMediaImage(imageProxy.getImage(), imageProxy.getImageInfo().getRotationDegrees());
 
         faceDetector.process(inputImage)
                 .addOnSuccessListener(faces -> {
@@ -222,28 +218,23 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     }
 
     private byte[] imageProxyToJpeg(ImageProxy imageProxy) {
-        ImageProxy.PlaneProxy yPlane = imageProxy.getPlanes()[0];
-        ImageProxy.PlaneProxy uPlane = imageProxy.getPlanes()[1];
-        ImageProxy.PlaneProxy vPlane = imageProxy.getPlanes()[2];
+        try {
+            Bitmap bitmap = imageProxy.toBitmap();
+            int rotationDegrees = imageProxy.getImageInfo().getRotationDegrees();
 
-        ByteBuffer yBuffer = yPlane.getBuffer();
-        ByteBuffer uBuffer = uPlane.getBuffer();
-        ByteBuffer vBuffer = vPlane.getBuffer();
+            if (rotationDegrees != 0) {
+                Matrix matrix = new Matrix();
+                matrix.postRotate(rotationDegrees);
+                bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+            }
 
-        int ySize = yBuffer.remaining();
-        int uSize = uBuffer.remaining();
-        int vSize = vBuffer.remaining();
-
-        byte[] nv21 = new byte[ySize + uSize + vSize];
-
-        yBuffer.get(nv21, 0, ySize);
-        vBuffer.get(nv21, ySize, vSize);
-        uBuffer.get(nv21, ySize + vSize, uSize);
-
-        YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, imageProxy.getWidth(), imageProxy.getHeight(), null);
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        yuvImage.compressToJpeg(new Rect(0, 0, yuvImage.getWidth(), yuvImage.getHeight()), 60, out);
-        return out.toByteArray();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 60, out);
+            return out.toByteArray();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
     }
 
     public boolean startWebServer(int port, String user, String pass) {
