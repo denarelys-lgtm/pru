@@ -59,6 +59,7 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     private WebServer webServer;
     private boolean isServerRunning = false;
     private boolean isAutoMode = true;
+    private boolean isCameraHardwareEnabled = true; // Control del sensor físico
     private volatile boolean isDetected = false;
     private volatile byte[] currentFrameBytes;
 
@@ -130,8 +131,30 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
         ContextCompat.getMainExecutor(this).execute(this::updateCameraUseCases);
     }
 
+    // Controla la activación y liberación del sensor de la cámara desde la Web
+    @Override
+    public void setCameraHardwareEnabled(boolean enable) {
+        this.isCameraHardwareEnabled = enable;
+        ContextCompat.getMainExecutor(this).execute(() -> {
+            if (cameraProvider != null) {
+                if (enable) {
+                    updateCameraUseCases();
+                } else {
+                    cameraProvider.unbindAll(); // Libera el sensor físico completamente
+                    currentFrameBytes = null;
+                    notifyStatus(false, "Estado: Cámara Apagada remotamente");
+                }
+            }
+        });
+    }
+
+    @Override
+    public boolean isCameraHardwareEnabled() {
+        return isCameraHardwareEnabled;
+    }
+
     private void updateCameraUseCases() {
-        if (cameraProvider == null || imageAnalysis == null) return;
+        if (cameraProvider == null || imageAnalysis == null || !isCameraHardwareEnabled) return;
 
         try {
             cameraProvider.unbindAll();
@@ -173,12 +196,11 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
 
     @ExperimentalGetImage
     private void processImageProxy(ImageProxy imageProxy) {
-        if (imageProxy.getImage() == null) {
+        if (!isCameraHardwareEnabled || imageProxy.getImage() == null) {
             imageProxy.close();
             return;
         }
 
-        // Conversión limpia respetando row-stride y rotación
         byte[] jpeg = imageProxyToJpeg(imageProxy);
         if (jpeg != null) {
             currentFrameBytes = jpeg;
@@ -275,6 +297,9 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
 
     @Override
     public boolean isStreamingAllowed() {
+        if (!isCameraHardwareEnabled) {
+            return false;
+        }
         if (!isAutoMode) {
             return true;
         }
