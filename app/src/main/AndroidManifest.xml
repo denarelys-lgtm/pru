@@ -3,7 +3,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="Mi Lista de Tareas"
+        android:label="Hola Mundo"
         android:theme="@style/Theme.MaterialComponents.Light.NoActionBar">
         <activity
             android:name=".MainActivity"
