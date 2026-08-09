@@ -21,7 +21,7 @@
         android:label="DetectCamera"
         android:roundIcon="@android:drawable/ic_menu_camera"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
+        android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
         tools:ignore="MissingApplicationIcon"
         tools:targetApi="31">
 
