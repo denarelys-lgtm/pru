@@ -40,7 +40,7 @@ public class MainActivity extends AppCompatActivity implements CameraService.Ser
     private SwitchMaterial switchMode;
     private TextView tvDetectionStatus, tvServerIp;
     private TextInputEditText etPort, etUser, etPass;
-    private Button btnToggleServer, btnRequestScreenShare;
+    private Button btnToggleServer;
 
     private CameraService cameraService;
     private boolean isBound = false;
@@ -80,16 +80,18 @@ public class MainActivity extends AppCompatActivity implements CameraService.Ser
         etPass = findViewById(R.id.etPass);
         btnToggleServer = findViewById(R.id.btnToggleServer);
 
-        // Registro para capturar pantalla con autorización del sistema
         screenCaptureLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
                     if (result.getResultCode() == RESULT_OK && result.getData() != null) {
                         if (isBound && cameraService != null) {
-                            cameraService.startScreenCapture(result.getResultCode(), result.getData());
+                            cameraService.setScreenCapturePermission(result.getResultCode(), result.getData());
                             Toast.makeText(this, "Permiso de pantalla concedido", Toast.LENGTH_SHORT).show();
                         }
                     } else {
+                        if (isBound && cameraService != null) {
+                            cameraService.stopScreenCapture();
+                        }
                         Toast.makeText(this, "Permiso de pantalla denegado", Toast.LENGTH_SHORT).show();
                     }
                 }
@@ -112,11 +114,14 @@ public class MainActivity extends AppCompatActivity implements CameraService.Ser
         checkDeviceOwnerStatus();
     }
 
-    public void requestScreenCapturePermission() {
-        MediaProjectionManager projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-        if (projectionManager != null) {
-            screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent());
-        }
+    @Override
+    public void onRequestScreenCapturePermission() {
+        runOnUiThread(() -> {
+            MediaProjectionManager projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+            if (projectionManager != null) {
+                screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent());
+            }
+        });
     }
 
     @Override
@@ -201,7 +206,6 @@ public class MainActivity extends AppCompatActivity implements CameraService.Ser
 
             if (cameraService.startWebServer(port, user, pass)) {
                 updateServerUiState();
-                requestScreenCapturePermission(); // Pedir permiso de transmisión de pantalla
                 Toast.makeText(this, "Servidor Iniciado", Toast.LENGTH_SHORT).show();
             } else {
                 Toast.makeText(this, "Error al iniciar servidor", Toast.LENGTH_SHORT).show();
