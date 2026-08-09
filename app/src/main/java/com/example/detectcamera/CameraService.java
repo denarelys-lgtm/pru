@@ -57,6 +57,7 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
 
     private ProcessCameraProvider cameraProvider;
     private ImageAnalysis imageAnalysis;
+    private PreviewView pendingPreviewView;
 
     private WebServer webServer;
     private boolean isServerRunning = false;
@@ -123,12 +124,32 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     }
 
     public void bindPreview(PreviewView previewView) {
-        if (cameraProvider != null) {
-            Preview preview = new Preview.Builder().build();
-            preview.setSurfaceProvider(previewView.getSurfaceProvider());
-            CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+        this.pendingPreviewView = previewView;
+        ContextCompat.getMainExecutor(this).execute(this::updateCameraUseCases);
+    }
+
+    public void unbindPreview() {
+        this.pendingPreviewView = null;
+        ContextCompat.getMainExecutor(this).execute(this::updateCameraUseCases);
+    }
+
+    private void updateCameraUseCases() {
+        if (cameraProvider == null || imageAnalysis == null) return;
+
+        try {
             cameraProvider.unbindAll();
-            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
+            CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+
+            if (pendingPreviewView != null) {
+                Preview preview = new Preview.Builder().build();
+                preview.setSurfaceProvider(pendingPreviewView.getSurfaceProvider());
+                cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
+            } else {
+                // Si la app está minimizada, solo mantenemos el análisis de imagen para la web
+                cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
@@ -146,10 +167,7 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
 
                 imageAnalysis.setAnalyzer(cameraExecutor, this::processImageProxy);
 
-                CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
-
-                cameraProvider.unbindAll();
-                cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis);
+                updateCameraUseCases();
 
             } catch (ExecutionException | InterruptedException e) {
                 e.printStackTrace();
