@@ -92,6 +92,22 @@ public class MainActivity extends AppCompatActivity implements CameraService.Ser
         checkDeviceOwnerStatus();
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (isBound && cameraService != null) {
+            cameraService.bindPreview(previewView);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (isBound && cameraService != null) {
+            cameraService.unbindPreview();
+        }
+    }
+
     private boolean checkAndRequestPermissions() {
         List<String> permissions = new ArrayList<>();
         permissions.add(Manifest.permission.CAMERA);
