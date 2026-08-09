@@ -14,9 +14,9 @@ import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
-import android.media.MediaRecorder;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.MediaRecorder;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Binder;
@@ -86,12 +86,14 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     private volatile byte[] frontFrameBytes;
     private volatile byte[] screenFrameBytes;
 
-    // Transmisión de Pantalla
+    // Proyección de Pantalla
+    private int screenResultCode = 0;
+    private Intent screenPermissionData = null;
     private MediaProjection mediaProjection;
     private VirtualDisplay virtualDisplay;
     private ImageReader screenImageReader;
 
-    // Transmisión de Audio
+    // Audio
     private AudioRecord audioRecord;
     private Thread audioThread;
     private boolean isRecordingAudio = false;
@@ -100,6 +102,7 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
 
     public interface ServiceCallback {
         void onDetectionStatusChanged(boolean detected, String statusText);
+        void onRequestScreenCapturePermission();
     }
 
     public class LocalBinder extends Binder {
@@ -161,12 +164,36 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
         return START_STICKY;
     }
 
-    public void startScreenCapture(int resultCode, Intent data) {
+    public void setScreenCapturePermission(int resultCode, Intent data) {
+        this.screenResultCode = resultCode;
+        this.screenPermissionData = data;
+        if (isScreenShareEnabled) {
+            startScreenCaptureInternal();
+        }
+    }
+
+    @Override
+    public void setScreenShareEnabled(boolean enable) {
+        this.isScreenShareEnabled = enable;
+        if (enable) {
+            if (screenPermissionData != null) {
+                startScreenCaptureInternal();
+            } else if (callback != null) {
+                // Solicitar al usuario permiso en la pantalla del celular
+                callback.onRequestScreenCapturePermission();
+            }
+        } else {
+            stopScreenCapture();
+        }
+    }
+
+    private void startScreenCaptureInternal() {
+        if (screenPermissionData == null || virtualDisplay != null) return;
+
         MediaProjectionManager projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
         if (projectionManager != null) {
-            mediaProjection = projectionManager.getMediaProjection(resultCode, data);
+            mediaProjection = projectionManager.getMediaProjection(screenResultCode, screenPermissionData);
             setupVirtualDisplay();
-            isScreenShareEnabled = true;
         }
     }
 
@@ -194,7 +221,7 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
             windowManager.getDefaultDisplay().getMetrics(metrics);
         }
 
-        int width = metrics.widthPixels / 2; // Escalar para optimizar ancho de banda
+        int width = metrics.widthPixels / 2;
         int height = metrics.heightPixels / 2;
         int density = metrics.densityDpi;
 
@@ -280,7 +307,6 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
 
             new Thread(() -> {
                 try {
-                    // Escribir cabecera WAV de tamaño indeterminado
                     byte[] header = createWavHeader(16000, 1, 16);
                     pipedOutputStream.write(header);
 
@@ -306,11 +332,11 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
         long byteRate = sampleRate * channels * bitsPerSample / 8;
 
         header[0] = 'R'; header[1] = 'I'; header[2] = 'F'; header[3] = 'F';
-        header[4] = 0; header[5] = 0; header[6] = 0; header[7] = 0; // Tamaño desconocido
+        header[4] = 0; header[5] = 0; header[6] = 0; header[7] = 0;
         header[8] = 'W'; header[9] = 'A'; header[10] = 'V'; header[11] = 'E';
         header[12] = 'f'; header[13] = 'm'; header[14] = 't'; header[15] = ' ';
         header[16] = 16; header[17] = 0; header[18] = 0; header[19] = 0;
-        header[20] = 1; header[21] = 0; // PCM
+        header[20] = 1; header[21] = 0;
         header[22] = (byte) channels; header[23] = 0;
         header[24] = (byte) (sampleRate & 0xff);
         header[25] = (byte) ((sampleRate >> 8) & 0xff);
