@@ -4,14 +4,27 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.Matrix;
+import android.graphics.PixelFormat;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
+import android.media.Image;
+import android.media.ImageReader;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.DisplayMetrics;
 import android.util.Size;
+import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -20,7 +33,6 @@ import androidx.camera.core.ExperimentalGetImage;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
-import androidx.camera.core.UseCaseGroup;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.NotificationCompat;
@@ -38,6 +50,10 @@ import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
+import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -60,13 +76,25 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     private boolean isServerRunning = false;
     private boolean isAutoMode = true;
 
-    // Estado independiente de cada cámara
     private boolean isBackCameraEnabled = true;
     private boolean isFrontCameraEnabled = false;
+    private boolean isScreenShareEnabled = false;
+    private boolean isAudioEnabled = false;
 
     private volatile boolean isDetected = false;
     private volatile byte[] backFrameBytes;
     private volatile byte[] frontFrameBytes;
+    private volatile byte[] screenFrameBytes;
+
+    // Transmisión de Pantalla
+    private MediaProjection mediaProjection;
+    private VirtualDisplay virtualDisplay;
+    private ImageReader screenImageReader;
+
+    // Transmisión de Audio
+    private AudioRecord audioRecord;
+    private Thread audioThread;
+    private boolean isRecordingAudio = false;
 
     private ServiceCallback callback;
 
@@ -113,10 +141,17 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     public int onStartCommand(Intent intent, int flags, int startId) {
         super.onStartCommand(intent, flags, startId);
 
-        Notification notification = createNotification("Transmisión y detección activas");
+        Notification notification = createNotification("Servicio de Monitoreo Activo");
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
+            int serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                serviceType |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                serviceType |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+            }
+            startForeground(NOTIFICATION_ID, notification, serviceType);
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }
@@ -124,6 +159,173 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
         startCamera();
 
         return START_STICKY;
+    }
+
+    public void startScreenCapture(int resultCode, Intent data) {
+        MediaProjectionManager projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        if (projectionManager != null) {
+            mediaProjection = projectionManager.getMediaProjection(resultCode, data);
+            setupVirtualDisplay();
+            isScreenShareEnabled = true;
+        }
+    }
+
+    public void stopScreenCapture() {
+        isScreenShareEnabled = false;
+        if (virtualDisplay != null) {
+            virtualDisplay.release();
+            virtualDisplay = null;
+        }
+        if (screenImageReader != null) {
+            screenImageReader.close();
+            screenImageReader = null;
+        }
+        if (mediaProjection != null) {
+            mediaProjection.stop();
+            mediaProjection = null;
+        }
+        screenFrameBytes = null;
+    }
+
+    private void setupVirtualDisplay() {
+        WindowManager windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+        DisplayMetrics metrics = new DisplayMetrics();
+        if (windowManager != null) {
+            windowManager.getDefaultDisplay().getMetrics(metrics);
+        }
+
+        int width = metrics.widthPixels / 2; // Escalar para optimizar ancho de banda
+        int height = metrics.heightPixels / 2;
+        int density = metrics.densityDpi;
+
+        screenImageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+        screenImageReader.setOnImageAvailableListener(reader -> {
+            Image image = reader.acquireLatestImage();
+            if (image != null) {
+                try {
+                    Image.Plane[] planes = image.getPlanes();
+                    ByteBuffer buffer = planes[0].getBuffer();
+                    int pixelStride = planes[0].getPixelStride();
+                    int rowStride = planes[0].getRowStride();
+                    int rowPadding = rowStride - pixelStride * width;
+
+                    Bitmap bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888);
+                    bitmap.copyPixelsFromBuffer(buffer);
+
+                    Bitmap cleanBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height);
+
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 45, out);
+                    screenFrameBytes = out.toByteArray();
+                } catch (Exception ignored) {
+                } finally {
+                    image.close();
+                }
+            }
+        }, null);
+
+        virtualDisplay = mediaProjection.createVirtualDisplay(
+                "ScreenCapture",
+                width, height, density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                screenImageReader.getSurface(), null, null
+        );
+    }
+
+    @Override
+    public void setAudioEnabled(boolean enable) {
+        this.isAudioEnabled = enable;
+        if (enable) {
+            startAudioRecording();
+        } else {
+            stopAudioRecording();
+        }
+    }
+
+    private synchronized void startAudioRecording() {
+        if (isRecordingAudio) return;
+        isRecordingAudio = true;
+
+        audioThread = new Thread(() -> {
+            int sampleRate = 16000;
+            int bufferSize = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            try {
+                audioRecord = new AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
+                audioRecord.startRecording();
+            } catch (SecurityException e) {
+                isRecordingAudio = false;
+            }
+        });
+        audioThread.start();
+    }
+
+    private synchronized void stopAudioRecording() {
+        isRecordingAudio = false;
+        if (audioRecord != null) {
+            try {
+                audioRecord.stop();
+                audioRecord.release();
+            } catch (Exception ignored) {}
+            audioRecord = null;
+        }
+    }
+
+    @Override
+    public InputStream getAudioStream() {
+        if (!isRecordingAudio || audioRecord == null) return null;
+
+        PipedInputStream pipedInputStream = new PipedInputStream();
+        try {
+            PipedOutputStream pipedOutputStream = new PipedOutputStream(pipedInputStream);
+
+            new Thread(() -> {
+                try {
+                    // Escribir cabecera WAV de tamaño indeterminado
+                    byte[] header = createWavHeader(16000, 1, 16);
+                    pipedOutputStream.write(header);
+
+                    byte[] buffer = new byte[1024];
+                    while (isRecordingAudio && audioRecord != null) {
+                        int read = audioRecord.read(buffer, 0, buffer.length);
+                        if (read > 0) {
+                            pipedOutputStream.write(buffer, 0, read);
+                        }
+                    }
+                    pipedOutputStream.close();
+                } catch (IOException ignored) {}
+            }).start();
+
+        } catch (IOException e) {
+            return null;
+        }
+        return pipedInputStream;
+    }
+
+    private byte[] createWavHeader(int sampleRate, int channels, int bitsPerSample) {
+        byte[] header = new byte[44];
+        long byteRate = sampleRate * channels * bitsPerSample / 8;
+
+        header[0] = 'R'; header[1] = 'I'; header[2] = 'F'; header[3] = 'F';
+        header[4] = 0; header[5] = 0; header[6] = 0; header[7] = 0; // Tamaño desconocido
+        header[8] = 'W'; header[9] = 'A'; header[10] = 'V'; header[11] = 'E';
+        header[12] = 'f'; header[13] = 'm'; header[14] = 't'; header[15] = ' ';
+        header[16] = 16; header[17] = 0; header[18] = 0; header[19] = 0;
+        header[20] = 1; header[21] = 0; // PCM
+        header[22] = (byte) channels; header[23] = 0;
+        header[24] = (byte) (sampleRate & 0xff);
+        header[25] = (byte) ((sampleRate >> 8) & 0xff);
+        header[26] = (byte) ((sampleRate >> 16) & 0xff);
+        header[27] = (byte) ((sampleRate >> 24) & 0xff);
+        header[28] = (byte) (byteRate & 0xff);
+        header[29] = (byte) ((byteRate >> 8) & 0xff);
+        header[30] = (byte) ((byteRate >> 16) & 0xff);
+        header[31] = (byte) ((byteRate >> 24) & 0xff);
+        header[32] = (byte) (channels * bitsPerSample / 8); header[33] = 0;
+        header[34] = (byte) bitsPerSample; header[35] = 0;
+        header[36] = 'd'; header[37] = 'a'; header[38] = 't'; header[39] = 'a';
+        header[40] = 0; header[41] = 0; header[42] = 0; header[43] = 0;
+
+        return header;
     }
 
     public void bindPreview(PreviewView previewView) {
@@ -149,14 +351,16 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     }
 
     @Override
-    public boolean isBackCameraEnabled() {
-        return isBackCameraEnabled;
-    }
+    public boolean isBackCameraEnabled() { return isBackCameraEnabled; }
 
     @Override
-    public boolean isFrontCameraEnabled() {
-        return isFrontCameraEnabled;
-    }
+    public boolean isFrontCameraEnabled() { return isFrontCameraEnabled; }
+
+    @Override
+    public boolean isScreenShareEnabled() { return isScreenShareEnabled; }
+
+    @Override
+    public boolean isAudioEnabled() { return isAudioEnabled; }
 
     @Override
     public boolean isConcurrentSupported() {
@@ -179,7 +383,6 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
                 return;
             }
 
-            // Si ambas están solicitadas y el dispositivo soporta cámara dual simultánea
             if (isBackCameraEnabled && isFrontCameraEnabled && isConcurrentSupported()) {
                 bindBothCameras();
             } else if (isBackCameraEnabled) {
@@ -211,7 +414,6 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     }
 
     private void bindBothCameras() {
-        // En dispositivos compatibles vincula ambas simultáneamente
         ImageAnalysis backAnalysis = new ImageAnalysis.Builder()
                 .setTargetResolution(new Size(640, 480))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -228,7 +430,6 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
             cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, backAnalysis);
             cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, frontAnalysis);
         } catch (Exception e) {
-            // Fallback si falla el modo concurrente
             bindSingleCamera(CameraSelector.DEFAULT_BACK_CAMERA, true);
         }
     }
@@ -333,29 +534,22 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
         isServerRunning = false;
     }
 
-    public boolean isServerRunning() {
-        return isServerRunning;
-    }
+    public boolean isServerRunning() { return isServerRunning; }
 
-    public void setAutoMode(boolean autoMode) {
-        this.isAutoMode = autoMode;
-    }
+    public void setAutoMode(boolean autoMode) { this.isAutoMode = autoMode; }
 
     @Override
-    public byte[] getBackFrame() {
-        return backFrameBytes;
-    }
+    public byte[] getBackFrame() { return backFrameBytes; }
 
     @Override
-    public byte[] getFrontFrame() {
-        return frontFrameBytes;
-    }
+    public byte[] getFrontFrame() { return frontFrameBytes; }
+
+    @Override
+    public byte[] getScreenFrame() { return screenFrameBytes; }
 
     @Override
     public boolean isStreamingAllowed() {
-        if (!isAutoMode) {
-            return true;
-        }
+        if (!isAutoMode) return true;
         return isDetected;
     }
 
@@ -363,7 +557,7 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID,
-                    "Canal de Cámara en Vivo",
+                    "Canal de Monitoreo",
                     NotificationManager.IMPORTANCE_LOW
             );
             NotificationManager manager = getSystemService(NotificationManager.class);
@@ -380,7 +574,7 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
         );
 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("DetectCamera Activa")
+                .setContentTitle("DetectCamera Activo")
                 .setContentText(contentText)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setContentIntent(pendingIntent)
@@ -391,6 +585,8 @@ public class CameraService extends LifecycleService implements WebServer.FramePr
     @Override
     public void onDestroy() {
         super.onDestroy();
+        stopScreenCapture();
+        stopAudioRecording();
         stopWebServer();
         if (cameraExecutor != null) {
             cameraExecutor.shutdown();
