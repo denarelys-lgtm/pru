@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "TaskApp"
+rootProject.name = "HolaMundo"
 include ':app'
