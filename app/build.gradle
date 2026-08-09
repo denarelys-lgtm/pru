@@ -3,22 +3,17 @@ plugins {
 }
 
 android {
-    namespace 'com.example.hola'
+    namespace 'com.example.detectcamera'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.example.hola"
+        applicationId "com.example.detectcamera"
         minSdk 24
         targetSdk 34
         versionCode 1
         versionName "1.0"
     }
 
-    buildTypes {
-        release {
-            minifyEnabled false
-        }
-    }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -27,5 +22,18 @@ android {
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'com.google.android.material:material:1.10.0'
+    implementation 'com.google.android.material:material:1.11.0'
+
+    // CameraX
+    implementation 'androidx.camera:camera-core:1.3.2'
+    implementation 'androidx.camera:camera-camera2:1.3.2'
+    implementation 'androidx.camera:camera-lifecycle:1.3.2'
+    implementation 'androidx.camera:camera-view:1.3.2'
+
+    // ML Kit - Detección de Rostros y Siluetas/Cuerpo (Pose)
+    implementation 'com.google.mlkit:face-detection:16.1.6'
+    implementation 'com.google.mlkit:pose-detection:18.0.0-beta3'
+
+    // Servidor Web Embebido (NanoHTTPD)
+    implementation 'org.nanohttpd:nanohttpd:2.3.1'
 }
