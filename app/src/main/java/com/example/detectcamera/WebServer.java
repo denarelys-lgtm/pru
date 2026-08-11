@@ -6,12 +6,18 @@ import java.io.ByteArrayInputStream;
 
 public class WebServer extends NanoHTTPD {
 
-    private byte[] ultimoFrame = null;
+    private byte[] ultimoFramePantalla = null;
+    private byte[] ultimoFrameCamara = null;
     private String usuarioValido = "";
     private String passwordValida = "";
+    private CameraService cameraService;
 
     public WebServer(int port) {
         super(port);
+    }
+
+    public void setCameraService(CameraService service) {
+        this.cameraService = service;
     }
 
     public void setCredenciales(String user, String pass) {
@@ -19,12 +25,15 @@ public class WebServer extends NanoHTTPD {
         this.passwordValida = pass != null ? pass.trim() : "";
     }
 
-    public synchronized void actualizarFrame(byte[] frame) {
-        this.ultimoFrame = frame;
+    public synchronized void actualizarFramePantalla(byte[] frame) {
+        this.ultimoFramePantalla = frame;
+    }
+
+    public synchronized void actualizarFrameCamara(byte[] frame) {
+        this.ultimoFrameCamara = frame;
     }
 
     private boolean estaAutenticado(IHTTPSession session) {
-        // Si no se configuró usuario o contraseña, permite el acceso libre
         if (usuarioValido.isEmpty() || passwordValida.isEmpty()) {
             return true;
         }
@@ -47,12 +56,11 @@ public class WebServer extends NanoHTTPD {
 
     @Override
     public Response serve(IHTTPSession session) {
-        // Exigir autenticación HTTP Basic
         if (!estaAutenticado(session)) {
             Response response = newFixedLengthResponse(
                     Response.Status.UNAUTHORIZED, 
                     "text/plain", 
-                    "Acceso Denegado. Inicie sesión."
+                    "Acceso Denegado."
             );
             response.addHeader("WWW-Authenticate", "Basic realm=\"Acceso Restringido\"");
             return response;
@@ -60,42 +68,89 @@ public class WebServer extends NanoHTTPD {
 
         String uri = session.getUri();
 
-        if ("/frame.jpg".equals(uri)) {
-            byte[] frameActual;
-            synchronized (this) {
-                frameActual = ultimoFrame;
+        // Control API para Encender/Apagar/Cambiar Cámara
+        if ("/api/camera".equals(uri)) {
+            String action = session.getParms().get("action");
+            if (cameraService != null) {
+                if ("on".equals(action)) {
+                    cameraService.iniciarCamara();
+                } else if ("off".equals(action)) {
+                    cameraService.detenerCamara();
+                } else if ("toggle".equals(action)) {
+                    cameraService.alternarCamara();
+                }
             }
-
-            if (frameActual != null && frameActual.length > 0) {
-                return newFixedLengthResponse(
-                        Response.Status.OK, 
-                        "image/jpeg", 
-                        new ByteArrayInputStream(frameActual), 
-                        frameActual.length
-                );
-            } else {
-                return newFixedLengthResponse(Response.Status.NO_CONTENT, "image/jpeg", "");
-            }
+            return newFixedLengthResponse(Response.Status.OK, "application/json", "{\"status\":\"ok\"}");
         }
 
+        // Stream de la Pantalla
+        if ("/frame.jpg".equals(uri)) {
+            byte[] frame;
+            synchronized (this) {
+                frame = ultimoFramePantalla;
+            }
+            if (frame != null && frame.length > 0) {
+                return newFixedLengthResponse(Response.Status.OK, "image/jpeg", new ByteArrayInputStream(frame), frame.length);
+            }
+            return newFixedLengthResponse(Response.Status.NO_CONTENT, "image/jpeg", "");
+        }
+
+        // Stream de la Cámara
+        if ("/camera_frame.jpg".equals(uri)) {
+            byte[] frame;
+            synchronized (this) {
+                frame = ultimoFrameCamara;
+            }
+            if (frame != null && frame.length > 0) {
+                return newFixedLengthResponse(Response.Status.OK, "image/jpeg", new ByteArrayInputStream(frame), frame.length);
+            }
+            return newFixedLengthResponse(Response.Status.NO_CONTENT, "image/jpeg", "");
+        }
+
+        // Panel Dashboard Principal
         String html = "<!DOCTYPE html>"
                 + "<html>"
                 + "<head>"
-                + "<title>Panel de Transmisión</title>"
+                + "<title>Panel de Control</title>"
                 + "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
                 + "<style>"
                 + "body { background-color: #121212; color: #ffffff; font-family: Arial, sans-serif; text-align: center; margin: 0; padding: 20px; }"
-                + "h1 { color: #00E676; }"
-                + "img { max-width: 95%; height: auto; border: 2px solid #333; border-radius: 8px; margin-top: 20px; }"
+                + "h1 { color: #00E676; margin-bottom: 20px; }"
+                + ".container { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }"
+                + ".card { background: #1e1e1e; padding: 15px; border-radius: 10px; border: 1px solid #333; max-width: 450px; width: 100%; }"
+                + "img { width: 100%; height: auto; border-radius: 6px; background: #000; min-height: 250px; object-fit: contain; }"
+                + "button { padding: 10px 15px; margin: 5px; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; color: white; }"
+                + ".btn-on { background-color: #00E676; color: #000; }"
+                + ".btn-off { background-color: #FF1744; }"
+                + ".btn-toggle { background-color: #29B6F6; color: #000; }"
                 + "</style>"
                 + "</head>"
                 + "<body>"
-                + "<h1>Servidor Transmitiendo</h1>"
-                + "<p>Estado: Activo</p>"
-                + "<img src='/frame.jpg' id='streamImg' alt='Cargando video...'>"
+                + "<h1>Panel de Control de Monitoreo</h1>"
+                + "<div class='container'>"
+                
+                // Card Pantalla
+                + "<div class='card'>"
+                + "<h3>Transmisión de Pantalla</h3>"
+                + "<img src='/frame.jpg' id='screenImg' alt='Esperando Pantalla...'>"
+                + "</div>"
+                
+                // Card Cámara
+                + "<div class='card'>"
+                + "<h3>Cámara en Vivo</h3>"
+                + "<img src='/camera_frame.jpg' id='cameraImg' alt='Cámara Apagada'>"
+                + "<div style='margin-top: 15px;'>"
+                + "<button class='btn-on' onclick=\"fetch('/api/camera?action=on')\">Encender Cámara</button>"
+                + "<button class='btn-off' onclick=\"fetch('/api/camera?action=off')\">Apagar Cámara</button>"
+                + "<button class='btn-toggle' onclick=\"fetch('/api/camera?action=toggle')\">Cambiar Cámara</button>"
+                + "</div>"
+                + "</div>"
+
+                + "</div>"
                 + "<script>"
                 + "  setInterval(function() {"
-                + "     document.getElementById('streamImg').src = '/frame.jpg?' + new Date().getTime();"
+                + "     document.getElementById('screenImg').src = '/frame.jpg?' + new Date().getTime();"
+                + "     document.getElementById('cameraImg').src = '/camera_frame.jpg?' + new Date().getTime();"
                 + "  }, 150);"
                 + "</script>"
                 + "</body>"
