@@ -1,5 +1,6 @@
 package com.example.detectcamera;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -7,9 +8,15 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.ImageFormat;
 import android.graphics.PixelFormat;
 
+import android.hardware.camera2.CameraCaptureSession;
+import android.hardware.camera2.CameraDevice;
+import android.hardware.camera2.CameraManager;
+import android.hardware.camera2.CaptureRequest;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.Image;
@@ -22,14 +29,19 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.text.format.Formatter;
 import android.util.Log;
+import android.view.Surface;
 import android.widget.Toast;
+import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Collections;
 
 public class CameraService extends Service {
 
@@ -39,19 +51,43 @@ public class CameraService extends Service {
 
     private MediaProjection mediaProjection;
     private VirtualDisplay virtualDisplay;
-    private ImageReader imageReader;
+    private ImageReader imageReaderScreen;
+    private ImageReader imageReaderCamera;
+    
     private WebServer webServer;
     private HandlerThread backgroundThread;
     private Handler backgroundHandler;
+
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
+
+    // Control Cámara Nativa (Camera2 API en Service)
+    private CameraDevice cameraDevice;
+    private CameraCaptureSession captureSession;
+    private boolean camaraActiva = false;
+    private String selectedCameraId = "0"; // "0" Trasera, "1" Frontal
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
         
-        backgroundThread = new HandlerThread("ImageReaderThread");
+        backgroundThread = new HandlerThread("CameraServiceBackgroundThread");
         backgroundThread.start();
         backgroundHandler = new Handler(backgroundThread.getLooper());
+
+        // Bloqueos de energía para continuar ejecutando con la pantalla apagada
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (pm != null) {
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DetectCamera::ServiceWakeLock");
+            wakeLock.acquire();
+        }
+
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm != null) {
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "DetectCamera::WifiLock");
+            wifiLock.acquire();
+        }
     }
 
     @Override
@@ -86,10 +122,10 @@ public class CameraService extends Service {
     }
 
     private void iniciarServidorYCaptura(String user, String pass) {
-        // 1. Iniciar Servidor Web
         if (webServer == null) {
             try {
                 webServer = new WebServer(PUERTO_WEB);
+                webServer.setCameraService(this);
                 webServer.setCredenciales(user, pass);
                 webServer.start(10000, false);
 
@@ -97,17 +133,16 @@ public class CameraService extends Service {
                 mostrarToastEnUI("Servidor Activo: http://" + ip + ":" + PUERTO_WEB);
             } catch (IOException e) {
                 Log.e("CameraService", "Error WebServer: " + e.getMessage());
-                mostrarToastEnUI("Error iniciando servidor: " + e.getMessage());
             }
         }
 
-        // 2. Configurar Captura de Pantalla en Tiempo Real
+        // Configuración de Captura de Pantalla
         int width = 720;
         int height = 1280;
         int density = 320;
 
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
-        imageReader.setOnImageAvailableListener(reader -> {
+        imageReaderScreen = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+        imageReaderScreen.setOnImageAvailableListener(reader -> {
             Image image = null;
             try {
                 image = reader.acquireLatestImage();
@@ -127,11 +162,11 @@ public class CameraService extends Service {
 
                     Bitmap cleanBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height);
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 60, baos);
+                    cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 50, baos);
 
                     byte[] jpegBytes = baos.toByteArray();
                     if (webServer != null) {
-                        webServer.actualizarFrame(jpegBytes);
+                        webServer.actualizarFramePantalla(jpegBytes);
                     }
 
                     cleanBitmap.recycle();
@@ -151,8 +186,125 @@ public class CameraService extends Service {
                     "ScreenCapture",
                     width, height, density,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    imageReader.getSurface(), null, null
+                    imageReaderScreen.getSurface(), null, null
             );
+        }
+    }
+
+    // Funciones para encender, apagar y cambiar la cámara física
+    public synchronized void iniciarCamara() {
+        if (camaraActiva) return;
+        CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
+        try {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+
+            imageReaderCamera = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 2);
+            imageReaderCamera.setOnImageAvailableListener(reader -> {
+                Image img = null;
+                try {
+                    img = reader.acquireLatestImage();
+                    if (img != null) {
+                        ByteBuffer buffer = img.getPlanes()[0].getBuffer();
+                        byte[] bytes = new byte[buffer.remaining()];
+                        buffer.get(bytes);
+                        if (webServer != null) {
+                            webServer.actualizarFrameCamara(bytes);
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } finally {
+                    if (img != null) {
+                        img.close();
+                    }
+                }
+            }, backgroundHandler);
+
+            manager.openCamera(selectedCameraId, new CameraDevice.StateCallback() {
+                @Override
+                public void onOpened(@NonNull CameraDevice camera) {
+                    cameraDevice = camera;
+                    crearSesionCapturaCamara();
+                }
+
+                @Override
+                public void onDisconnected(@NonNull CameraDevice camera) {
+                    camera.close();
+                    cameraDevice = null;
+                }
+
+                @Override
+                public void onError(@NonNull CameraDevice camera, int error) {
+                    camera.close();
+                    cameraDevice = null;
+                }
+            }, backgroundHandler);
+
+            camaraActiva = true;
+        } catch (Exception e) {
+            Log.e("CameraService", "Error al abrir la cámara: " + e.getMessage());
+        }
+    }
+
+    private void crearSesionCapturaCamara() {
+        try {
+            Surface surface = imageReaderCamera.getSurface();
+            CaptureRequest.Builder builder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+            builder.addTarget(surface);
+
+            cameraDevice.createCaptureSession(Collections.singletonList(surface), new CameraCaptureSession.StateCallback() {
+                @Override
+                public void onConfigured(@NonNull CameraCaptureSession session) {
+                    captureSession = session;
+                    try {
+                        captureSession.setRepeatingRequest(builder.build(), null, backgroundHandler);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                @Override
+                public void onConfigureFailed(@NonNull CameraCaptureSession session) {}
+            }, backgroundHandler);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public synchronized void detenerCamara() {
+        if (!camaraActiva) return;
+        try {
+            if (captureSession != null) {
+                captureSession.close();
+                captureSession = null;
+            }
+            if (cameraDevice != null) {
+                cameraDevice.close();
+                cameraDevice = null;
+            }
+            if (imageReaderCamera != null) {
+                imageReaderCamera.close();
+                imageReaderCamera = null;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        camaraActiva = false;
+        if (webServer != null) {
+            webServer.actualizarFrameCamara(null);
+        }
+    }
+
+    public synchronized void alternarCamara() {
+        boolean estabaActiva = camaraActiva;
+        if (camaraActiva) {
+            detenerCamara();
+        }
+        selectedCameraId = "0".equals(selectedCameraId) ? "1" : "0";
+        if (estabaActiva) {
+            iniciarCamara();
         }
     }
 
@@ -172,6 +324,8 @@ public class CameraService extends Service {
 
     @Override
     public void onDestroy() {
+        detenerCamara();
+
         if (webServer != null) {
             webServer.stop();
             webServer = null;
@@ -179,11 +333,17 @@ public class CameraService extends Service {
         if (virtualDisplay != null) {
             virtualDisplay.release();
         }
-        if (imageReader != null) {
-            imageReader.close();
+        if (imageReaderScreen != null) {
+            imageReaderScreen.close();
         }
         if (mediaProjection != null) {
             mediaProjection.stop();
+        }
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+        }
+        if (wifiLock != null && wifiLock.isHeld()) {
+            wifiLock.release();
         }
         if (backgroundThread != null) {
             backgroundThread.quitSafely();
