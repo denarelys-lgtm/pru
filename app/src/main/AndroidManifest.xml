@@ -2,14 +2,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permisos del Sistema -->
+    <!-- Permisos de Red -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- Permisos de Cámara y Audio -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Permisos para Servicios en Primer Plano -->
+    <!-- Permisos de Foreground Service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
@@ -21,6 +24,7 @@
         android:label="DetectCamera"
         android:roundIcon="@android:drawable/ic_menu_camera"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
         tools:ignore="MissingApplicationIcon">
 
@@ -34,14 +38,14 @@
             </intent-filter>
         </activity>
 
-        <!-- Servicio Foreground Persistente -->
+        <!-- Servicio Foreground de Captura y Servidor Web -->
         <service
             android:name=".CameraService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="camera|microphone|mediaProjection" />
 
-        <!-- Receiver para Device Owner / Admin (Listo para cuando ejecutes el ADB) -->
+        <!-- Receiver para cuando decidas usar ADB / Device Owner -->
         <receiver
             android:name=".MyDeviceAdminReceiver"
             android:exported="true"
