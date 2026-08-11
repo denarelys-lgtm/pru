@@ -41,7 +41,6 @@ public class MainActivity extends AppCompatActivity {
         tvIpAddress = findViewById(R.id.tvIpAddress);
         btnStartServer = findViewById(R.id.btnStartServer);
 
-        // Mostrar IP local en pantalla
         String ip = obtenerIpLocal();
         tvIpAddress.setText("IP: http://" + ip + ":8080");
 
@@ -60,7 +59,6 @@ public class MainActivity extends AppCompatActivity {
         DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
         ComponentName adminComponent = new ComponentName(this, MyDeviceAdminReceiver.class);
 
-        // Si es Device Owner, otorga permisos silenciosamente
         if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) {
             String[] permisos = {
                 Manifest.permission.CAMERA,
@@ -131,8 +129,6 @@ public class MainActivity extends AppCompatActivity {
             Intent serviceIntent = new Intent(this, CameraService.class);
             serviceIntent.putExtra("RESULT_CODE", resultCode);
             serviceIntent.putExtra("DATA_INTENT", data);
-            
-            // Pasar credenciales ingresadas al servicio
             serviceIntent.putExtra("USER_PARAM", etUsername.getText().toString());
             serviceIntent.putExtra("PASS_PARAM", etPassword.getText().toString());
 
