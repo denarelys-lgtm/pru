@@ -7,20 +7,29 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.PixelFormat;
+
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.media.Image;
+import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.text.format.Formatter;
 import android.util.Log;
 import android.widget.Toast;
 import androidx.core.app.NotificationCompat;
+
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 
 public class CameraService extends Service {
 
@@ -30,12 +39,19 @@ public class CameraService extends Service {
 
     private MediaProjection mediaProjection;
     private VirtualDisplay virtualDisplay;
+    private ImageReader imageReader;
     private WebServer webServer;
+    private HandlerThread backgroundThread;
+    private Handler backgroundHandler;
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+        
+        backgroundThread = new HandlerThread("ImageReaderThread");
+        backgroundThread.start();
+        backgroundHandler = new Handler(backgroundThread.getLooper());
     }
 
     @Override
@@ -53,13 +69,15 @@ public class CameraService extends Service {
         if (intent != null && intent.hasExtra("RESULT_CODE") && intent.hasExtra("DATA_INTENT")) {
             int resultCode = intent.getIntExtra("RESULT_CODE", Activity.RESULT_CANCELED);
             Intent data = intent.getParcelableExtra("DATA_INTENT");
+            String user = intent.getStringExtra("USER_PARAM");
+            String pass = intent.getStringExtra("PASS_PARAM");
 
             if (resultCode == Activity.RESULT_OK && data != null) {
                 MediaProjectionManager projectionManager = 
                         (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
                 if (projectionManager != null) {
                     mediaProjection = projectionManager.getMediaProjection(resultCode, data);
-                    iniciarServidorYCaptura();
+                    iniciarServidorYCaptura(user, pass);
                 }
             }
         }
@@ -67,30 +85,73 @@ public class CameraService extends Service {
         return START_STICKY;
     }
 
-    private void iniciarServidorYCaptura() {
-        // 1. Iniciar el Servidor Web NanoHTTPD
+    private void iniciarServidorYCaptura(String user, String pass) {
+        // 1. Iniciar Servidor Web
         if (webServer == null) {
             try {
                 webServer = new WebServer(PUERTO_WEB);
+                webServer.setCredenciales(user, pass);
                 webServer.start(10000, false);
-                
-                String ip = obtenerIpDispositivo();
-                mostrarToastEnUI("Servidor corriendo en: http://" + ip + ":" + PUERTO_WEB);
-                Log.d("CameraService", "Servidor HTTP iniciado en http://" + ip + ":" + PUERTO_WEB);
 
+                String ip = obtenerIpDispositivo();
+                mostrarToastEnUI("Servidor Activo: http://" + ip + ":" + PUERTO_WEB);
             } catch (IOException e) {
-                Log.e("CameraService", "Error iniciando WebServer: " + e.getMessage());
-                mostrarToastEnUI("Error iniciando puerto " + PUERTO_WEB + ": " + e.getMessage());
+                Log.e("CameraService", "Error WebServer: " + e.getMessage());
+                mostrarToastEnUI("Error iniciando servidor: " + e.getMessage());
             }
         }
 
-        // 2. Crear la proyección en pantalla
+        // 2. Configurar Captura de Pantalla en Tiempo Real
+        int width = 720;
+        int height = 1280;
+        int density = 320;
+
+        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+        imageReader.setOnImageAvailableListener(reader -> {
+            Image image = null;
+            try {
+                image = reader.acquireLatestImage();
+                if (image != null) {
+                    Image.Plane[] planes = image.getPlanes();
+                    ByteBuffer buffer = planes[0].getBuffer();
+                    int pixelStride = planes[0].getPixelStride();
+                    int rowStride = planes[0].getRowStride();
+                    int rowPadding = rowStride - pixelStride * width;
+
+                    Bitmap bitmap = Bitmap.createBitmap(
+                            width + rowPadding / pixelStride, 
+                            height, 
+                            Bitmap.Config.ARGB_8888
+                    );
+                    bitmap.copyPixelsFromBuffer(buffer);
+
+                    Bitmap cleanBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height);
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 60, baos);
+
+                    byte[] jpegBytes = baos.toByteArray();
+                    if (webServer != null) {
+                        webServer.actualizarFrame(jpegBytes);
+                    }
+
+                    cleanBitmap.recycle();
+                    bitmap.recycle();
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                if (image != null) {
+                    image.close();
+                }
+            }
+        }, backgroundHandler);
+
         if (mediaProjection != null && virtualDisplay == null) {
             virtualDisplay = mediaProjection.createVirtualDisplay(
                     "ScreenCapture",
-                    1280, 720, 320,
+                    width, height, density,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    null, null, null
+                    imageReader.getSurface(), null, null
             );
         }
     }
@@ -118,8 +179,14 @@ public class CameraService extends Service {
         if (virtualDisplay != null) {
             virtualDisplay.release();
         }
+        if (imageReader != null) {
+            imageReader.close();
+        }
         if (mediaProjection != null) {
             mediaProjection.stop();
+        }
+        if (backgroundThread != null) {
+            backgroundThread.quitSafely();
         }
         super.onDestroy();
     }
