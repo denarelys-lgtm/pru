@@ -8,8 +8,13 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.projection.MediaProjectionManager;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.text.format.Formatter;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.TextView;
 import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -21,22 +26,42 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQUEST_CODE_PERMISSIONS = 100;
     private static final int REQUEST_CODE_SCREEN_CAPTURE = 1001;
 
+    private EditText etUsername;
+    private EditText etPassword;
+    private TextView tvIpAddress;
+    private Button btnStartServer;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        gestionarPermisos();
+        etUsername = findViewById(R.id.etUsername);
+        etPassword = findViewById(R.id.etPassword);
+        tvIpAddress = findViewById(R.id.tvIpAddress);
+        btnStartServer = findViewById(R.id.btnStartServer);
+
+        // Mostrar IP local en pantalla
+        String ip = obtenerIpLocal();
+        tvIpAddress.setText("IP: http://" + ip + ":8080");
+
+        btnStartServer.setOnClickListener(v -> gestionarPermisosYArrancar());
     }
 
-    private void gestionarPermisos() {
+    private String obtenerIpLocal() {
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm != null) {
+            return Formatter.formatIpAddress(wm.getConnectionInfo().getIpAddress());
+        }
+        return "Desconocida";
+    }
+
+    private void gestionarPermisosYArrancar() {
         DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
         ComponentName adminComponent = new ComponentName(this, MyDeviceAdminReceiver.class);
 
-        // Comprobación de Device Owner
+        // Si es Device Owner, otorga permisos silenciosamente
         if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) {
-            Toast.makeText(this, "Ejecutando en Modo Device Owner", Toast.LENGTH_SHORT).show();
-
             String[] permisos = {
                 Manifest.permission.CAMERA,
                 Manifest.permission.RECORD_AUDIO,
@@ -51,11 +76,8 @@ public class MainActivity extends AppCompatActivity {
                     DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
                 );
             }
-
             solicitarCapturaPantalla();
-
         } else {
-            // Modo Normal (Solicitar permisos si faltan)
             if (faltanPermisosRuntime()) {
                 solicitarPermisosEstandar();
             } else {
@@ -109,12 +131,17 @@ public class MainActivity extends AppCompatActivity {
             Intent serviceIntent = new Intent(this, CameraService.class);
             serviceIntent.putExtra("RESULT_CODE", resultCode);
             serviceIntent.putExtra("DATA_INTENT", data);
+            
+            // Pasar credenciales ingresadas al servicio
+            serviceIntent.putExtra("USER_PARAM", etUsername.getText().toString());
+            serviceIntent.putExtra("PASS_PARAM", etPassword.getText().toString());
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(serviceIntent);
             } else {
                 startService(serviceIntent);
             }
+            Toast.makeText(this, "Servidor Iniciado", Toast.LENGTH_SHORT).show();
         }
     }
 }
