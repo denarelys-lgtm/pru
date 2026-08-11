@@ -26,7 +26,6 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // Evaluar permisos y modo de ejecución
         gestionarPermisos();
     }
 
@@ -34,11 +33,10 @@ public class MainActivity extends AppCompatActivity {
         DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
         ComponentName adminComponent = new ComponentName(this, MyDeviceAdminReceiver.class);
 
-        // Detección dinámica: ¿Es Device Owner actualmente?
+        // Comprobación de Device Owner
         if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) {
-            // RUTA A: Si ya es Device Owner, conceder permisos en silencio
-            Toast.makeText(this, "Ejecutando como Device Owner", Toast.LENGTH_SHORT).show();
-            
+            Toast.makeText(this, "Ejecutando en Modo Device Owner", Toast.LENGTH_SHORT).show();
+
             String[] permisos = {
                 Manifest.permission.CAMERA,
                 Manifest.permission.RECORD_AUDIO,
@@ -53,11 +51,11 @@ public class MainActivity extends AppCompatActivity {
                     DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
                 );
             }
-            
+
             solicitarCapturaPantalla();
 
         } else {
-            // RUTA B: Si NO es Device Owner todavía, usar la vía estándar
+            // Modo Normal (Solicitar permisos si faltan)
             if (faltanPermisosRuntime()) {
                 solicitarPermisosEstandar();
             } else {
