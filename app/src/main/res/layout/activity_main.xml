@@ -1,123 +1,58 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="16dp">
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:gravity="center_horizontal">
 
-    <LinearLayout
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Servidor de Transmisión"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="12dp" />
+
+    <TextView
+        android:id="@+id/tvIpAddress"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="IP: Desconectado"
+        android:textSize="16sp"
+        android:textColor="#00E676"
+        android:textStyle="bold"
+        android:layout_marginBottom="16dp" />
+
+    <EditText
+        android:id="@+id/etUsername"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:hint="Usuario del panel"
+        android:inputType="text"
+        android:layout_marginBottom="8dp" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Cámara con Detección y Servidor Web"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="12dp" />
+    <EditText
+        android:id="@+id/etPassword"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Contraseña del panel"
+        android:inputType="textPassword"
+        android:layout_marginBottom="16dp" />
 
-        <androidx.camera.view.PreviewView
-            android:id="@+id/previewView"
-            android:layout_width="match_parent"
-            android:layout_height="240dp"
-            android:background="#111111"
-            android:layout_marginBottom="12dp" />
+    <Button
+        android:id="@+id/btnStartServer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Iniciar Servidor"
+        android:layout_marginBottom="16dp" />
 
-        <com.google.android.material.switchmaterial.SwitchMaterial
-            android:id="@+id/switchMode"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Modo: Automático (Transmitir al detectar)"
-            android:checked="true"
-            android:layout_marginBottom="8dp" />
+    <!-- PreviewView para compatibilidad con la cámara local -->
+    <androidx.camera.view.PreviewView
+        android:id="@+id/previewView"
+        android:layout_width="match_parent"
+        android:layout_height="200dp"
+        android:background="#222222" />
 
-        <TextView
-            android:id="@+id/tvDetectionStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Estado: Esperando detección..."
-            android:textColor="#666666"
-            android:layout_marginBottom="16dp" />
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Configuración del Servidor"
-                    android:textStyle="bold"
-                    android:textSize="16sp"
-                    android:layout_marginBottom="8dp" />
-
-                <TextView
-                    android:id="@+id/tvServerIp"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="IP: No iniciado"
-                    android:textSize="14sp"
-                    android:layout_marginBottom="12dp" />
-
-                <com.google.android.material.textfield.TextInputLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:hint="Puerto (Ej. 8080)"
-                    android:layout_marginBottom="8dp">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etPort"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:inputType="number"
-                        android:text="8080" />
-                </com.google.android.material.textfield.TextInputLayout>
-
-                <com.google.android.material.textfield.TextInputLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:hint="Usuario Panel"
-                    android:layout_marginBottom="8dp">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etUser"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="admin" />
-                </com.google.android.material.textfield.TextInputLayout>
-
-                <com.google.android.material.textfield.TextInputLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:hint="Contraseña Panel"
-                    android:layout_marginBottom="12dp">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etPass"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:inputType="textPassword"
-                        android:text="1234" />
-                </com.google.android.material.textfield.TextInputLayout>
-
-                <Button
-                    android:id="@+id/btnToggleServer"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Iniciar Servidor Web" />
-
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-    </LinearLayout>
-</ScrollView>
+</LinearLayout>
